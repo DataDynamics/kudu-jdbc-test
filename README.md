@@ -787,5 +787,17 @@ date ; impala-shell -i hdw1 -B -Q BATCH_SIZE=65536 -Q MT_DOP=16 -q "select * fro
 ```
 
 ```text
-
+[root@hdw1:~]# date ; impala-shell -i hdw1 -B -Q BATCH_SIZE=65536 -Q MT_DOP=16 -q "select * from ${TABLE_NAME} where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'" -o /dev/null --print_header --output_delimiter=',' ; date
+2022. 04. 12. (화) 22:39:38 KST
+Starting Impala Shell without Kerberos authentication
+Warning: live_progress only applies to interactive shell sessions, and is being skipped for now.
+Opened TCP connection to hdw1:21000
+Connected to hdw1:21000
+Server version: impalad version 3.4.0-SNAPSHOT RELEASE (build 27b919fc8a5907648349aa48eefc894e15a5a6d4)
+Query: select * from log_hash_range where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'
+Query submitted at: 2022-04-12 22:39:38 (Coordinator: http://hdw1.dd.io:25000)
+Query progress can be monitored at: http://hdw1.dd.io:25000/query_plan?query_id=1d407e540ce906a8:4ec141bd00000000
+Fetched 93873513 row(s) in 1618.50s
+2022. 04. 12. (화) 23:06:37 KST
+[root@hdw1:~]# 
 ```
