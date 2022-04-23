@@ -801,3 +801,454 @@ Fetched 93873513 row(s) in 1618.50s
 2022. 04. 12. (화) 23:06:37 KST
 [root@hdw1:~]# 
 ```
+
+# Apache calcite 이용
+
+## History
+
+* 2022-04-23 토요일 아침, 자다가 갑자기 깸
+* [Apache HAWQ](https://hawq.apache.org/) 로 [Apache HBase](https://hbase.apache.org/) 에서 data 가져왔던게 생각남
+* 얼마 전 [Apache nifi](https://nifi.apache.org/) 의 [QueryRecord](https://nifi.apache.org/docs/nifi-docs/components/org.apache.nifi/nifi-standard-nar/1.15.2/org.apache.nifi.processors.standard.QueryRecord/index.html) 에서 [Apache calcite](https://calcite.apache.org/) 를 사용하는데 엄청 괜찮았던 기억이 있었음
+* calcite 를 사용해볼 수는 없을까 구글링을 함
+* [Apache calcite Adapters](https://calcite.apache.org/docs/adapter.html) 문서를 찾음
+* kudu 용으로 만들까 생각을 해봄
+* [calcite-kudu](https://github.com/twilio/calcite-kudu) 를 찾음
+* 내 실행환경은 CDP 7.1.7 kudu 1.15.0 인데 해당 repository 에서도 kudu 1.15.0 을 사용하고 있음!!
+* 1년정도 됐는데 3주 전까지도 release 가 있음
+* 바로 적용해봄
+
+## Apply
+
+* dependency 추가
+  ```xml
+  <dependency>
+    <groupId>com.twilio</groupId>
+    <artifactId>kudu-sql-adapter</artifactId>
+    <version>1.0.57</version>
+  </dependency>
+  ```
+* jdbc url 을 `jdbc:impala://hdw1.dd.io:21050/default` 에서 `jdbc:kudu:schemaFactory=com.twilio.kudu.sql.schema.DefaultKuduSchemaFactory;schema=default;timeZone=ko_KR;caseSensitive=false;schema.connect=adm1:7051,hdm1:7051,hdm2:7051` 로 변경
+* jdbc driver 를 `com.cloudera.impala.jdbc.Driver` 에서 `org.apache.calcite.jdbc.KuduDriver` 로 변경
+* sql 에서 table 을 `log_range` 에서 `"default.log_range"` 로 변경
+
+## 결과
+
+* elapsed time 이 약 1091초에서 약 289초로 __3배 이상 빨라짐__
+* 기존에는 client 의 network receive 속도가 12MB/s 를 넘지 못했으나 __client 최대 bandwidth 까지 사용!!!!__
+* 오히려 속도 제한 또는 scanner 개수 제한 옵션을 적용해야 할지도 모르겠음
+* scanner 가 10개 생성됐는데 왜 10개인지 살펴봐야 함
+
+## 기존 실행 log
+
+```text
+[root@hdw1:~]# java -jar kudu-jdbc-tester-0.4.jar "jdbc:impala://hdw1.dd.io:21050/default" "select * from log_range where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'" 100000000
+2022-04-23 14:10:10.986  INFO [io.datadynamics.kudu.Starter  :31] - jdbcUrl = jdbc:impala://hdw1.dd.io:21050/default
+2022-04-23 14:10:10.992  INFO [io.datadynamics.kudu.Starter  :32] - sqls = [select * from log_range where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59']
+2022-04-23 14:10:10.992  INFO [io.datadynamics.kudu.Starter  :33] - doPrint = true
+2022-04-23 14:10:10.992  INFO [io.datadynamics.kudu.Starter  :34] - printRows = 100000000
+2022-04-23 14:10:10.993  INFO [io.datadynamics.kudu.Starter  :37] - started
+2022-04-23 14:10:11.697  INFO [io.datadynamics.kudu.Starter  :47] - sql = select * from log_range where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'
+2022-04-23 14:10:12.099  INFO [io.datadynamics.kudu.Starter  :76] - rows = 0
+2022-04-23 14:28:22.452  INFO [io.datadynamics.kudu.Starter  :81] - finished
+2022-04-23 14:28:22.453  INFO [io.datadynamics.kudu.Starter  :82] - total rows = 93873513
+2022-04-23 14:28:22.453  INFO [io.datadynamics.kudu.Starter  :88] - elapsedTime = 1091.459700916 s
+[root@hdw1:~]#
+```
+
+```text
+[root@hdw1:~]# java -jar kudu-jdbc-tester-0.4.jar "jdbc:kudu:schemaFactory=com.twilio.kudu.sql.schema.DefaultKuduSchemaFactory;schema=default;timeZone=ko_KR;caseSensitive=false;schema.connect=adm1:7051,hdm1:7051,hdm2:7051" "select * from \"default.log_range\" where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'" 100000000
+2022-04-23 14:30:10.769  INFO [io.datadynamics.kudu.Starter  :31] - jdbcUrl = jdbc:kudu:schemaFactory=com.twilio.kudu.sql.schema.DefaultKuduSchemaFactory;schema=default;timeZone=ko_KR;caseSensitive=false;schema.connect=adm1:7051,hdm1:7051,hdm2:7051
+2022-04-23 14:30:10.774  INFO [io.datadynamics.kudu.Starter  :32] - sqls = [select * from "default.log_range" where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59']
+2022-04-23 14:30:10.774  INFO [io.datadynamics.kudu.Starter  :33] - doPrint = true
+2022-04-23 14:30:10.774  INFO [io.datadynamics.kudu.Starter  :34] - printRows = 100000000
+2022-04-23 14:30:10.775  INFO [io.datadynamics.kudu.Starter  :37] - started
+2022-04-23 14:30:11.565  INFO [io.datadynamics.kudu.Starter  :47] - sql = select * from "default.log_range" where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'
+2022-04-23 14:30:12.637 DEBUG [org.apache.calcite.sql.parser :610] - Reduced `START_TIME` BETWEEN ASYMMETRIC '2021-01-01 00:00:00' AND '2021-05-31 23:59:59'
+2022-04-23 14:30:13.236 DEBUG [c.stumbleupon.async.Deferred  :1330] - callback=retry RPC@406848661 returned Deferred@490101944(state=PENDING, result=null, callback=(continuation of Deferred@1058325155 after retry RPC@406848661), errback=(continuation of Deferred@1058325155 after retry RPC@406848661)), so the following Deferred is getting paused: Deferred@1058325155(state=PAUSED, result=Deferred@490101944, callback=wakeup thread main, errback=wakeup thread main)
+2022-04-23 14:30:13.765 DEBUG [org.apache.calcite.sql2rel    :585] - Plan after converting SqlNode to RelNode
+LogicalProject(START_TIME=[$0], B_ID=[$1], NOW_TIME=[$2], USERFLAG=[$3], B_NAME=[$4], TITLE=[$5], ALL_VIEWER=[$6], PC_VIEWER=[$7], MOBILE_VIEWER=[$8], RELAY_VIEWER=[$9], TOTAL_VIEWER=[$10], USER_TITLES=[$11], USER_ID=[$12], LOGIN_INDEX=[$13], USER_NICK=[$14], IS_MOBILE=[$15], IS_DIRECT_CHAT_SEND=[$16], FROM=[$17], TO=[$18], IS_ADMIN_DIRECT_CHAT=[$19], GRADE=[$20], TEXT=[$21], VERSION=[$22], UP_COUNT=[$23], P_B_ID=[$24], P_START_TIME=[$25])
+  LogicalFilter(condition=[AND(>=($0, CAST('2021-01-01 00:00:00'):TIMESTAMP(0) NOT NULL), <=($0, CAST('2021-05-31 23:59:59'):TIMESTAMP(0) NOT NULL))])
+    KuduQuery(table=[[default, default.log_range]])
+
+2022-04-23 14:30:13.791 DEBUG [org.apache.calcite.sql2rel    :172] - Plan after trimming unused fields
+LogicalProject(START_TIME=[$0], B_ID=[$1], NOW_TIME=[$2], USERFLAG=[$3], B_NAME=[$4], TITLE=[$5], ALL_VIEWER=[$6], PC_VIEWER=[$7], MOBILE_VIEWER=[$8], RELAY_VIEWER=[$9], TOTAL_VIEWER=[$10], USER_TITLES=[$11], USER_ID=[$12], LOGIN_INDEX=[$13], USER_NICK=[$14], IS_MOBILE=[$15], IS_DIRECT_CHAT_SEND=[$16], FROM=[$17], TO=[$18], IS_ADMIN_DIRECT_CHAT=[$19], GRADE=[$20], TEXT=[$21], VERSION=[$22], UP_COUNT=[$23], P_B_ID=[$24], P_START_TIME=[$25])
+  LogicalFilter(condition=[AND(>=($0, CAST('2021-01-01 00:00:00'):TIMESTAMP(0) NOT NULL), <=($0, CAST('2021-05-31 23:59:59'):TIMESTAMP(0) NOT NULL))])
+    KuduQuery(table=[[default, default.log_range]])
+
+2022-04-23 14:30:13.791 DEBUG [org.apache.calcite.sql2rel    :534] - Plan after trimming unused fields
+LogicalProject(START_TIME=[$0], B_ID=[$1], NOW_TIME=[$2], USERFLAG=[$3], B_NAME=[$4], TITLE=[$5], ALL_VIEWER=[$6], PC_VIEWER=[$7], MOBILE_VIEWER=[$8], RELAY_VIEWER=[$9], TOTAL_VIEWER=[$10], USER_TITLES=[$11], USER_ID=[$12], LOGIN_INDEX=[$13], USER_NICK=[$14], IS_MOBILE=[$15], IS_DIRECT_CHAT_SEND=[$16], FROM=[$17], TO=[$18], IS_ADMIN_DIRECT_CHAT=[$19], GRADE=[$20], TEXT=[$21], VERSION=[$22], UP_COUNT=[$23], P_B_ID=[$24], P_START_TIME=[$25])
+  LogicalFilter(condition=[AND(>=($0, CAST('2021-01-01 00:00:00'):TIMESTAMP(0) NOT NULL), <=($0, CAST('2021-05-31 23:59:59'):TIMESTAMP(0) NOT NULL))])
+    KuduQuery(table=[[default, default.log_range]])
+
+2022-04-23 14:30:13.813 DEBUG [a.c.p.A.rule_execution_summary:290] - Rule Attempts Info for HepPlanner
+2022-04-23 14:30:13.814 DEBUG [a.c.p.A.rule_execution_summary:291] -
+Rules                                                                   Attempts           Time (us)
+* Total                                                                        0                   0
+
+2022-04-23 14:30:13.815 DEBUG [o.a.c.plan.RelOptPlanner      :381] - For final plan, using rel#7:LogicalProject.NONE.[](input=HepRelVertex#6,inputs=0..25)
+2022-04-23 14:30:13.815 DEBUG [o.a.c.plan.RelOptPlanner      :381] - For final plan, using rel#5:LogicalFilter.NONE.[](input=HepRelVertex#4,condition=AND(>=($0, CAST('2021-01-01 00:00:00'):TIMESTAMP(0) NOT NULL), <=($0, CAST('2021-05-31 23:59:59'):TIMESTAMP(0) NOT NULL)))
+2022-04-23 14:30:13.815 DEBUG [o.a.c.plan.RelOptPlanner      :381] - For final plan, using rel#1:KuduQuery.KUDU.[](table=[default, default.log_range])
+2022-04-23 14:30:13.818 DEBUG [org.apache.calcite.sql2rel    :172] - Plan after trimming unused fields
+LogicalProject(START_TIME=[$0], B_ID=[$1], NOW_TIME=[$2], USERFLAG=[$3], B_NAME=[$4], TITLE=[$5], ALL_VIEWER=[$6], PC_VIEWER=[$7], MOBILE_VIEWER=[$8], RELAY_VIEWER=[$9], TOTAL_VIEWER=[$10], USER_TITLES=[$11], USER_ID=[$12], LOGIN_INDEX=[$13], USER_NICK=[$14], IS_MOBILE=[$15], IS_DIRECT_CHAT_SEND=[$16], FROM=[$17], TO=[$18], IS_ADMIN_DIRECT_CHAT=[$19], GRADE=[$20], TEXT=[$21], VERSION=[$22], UP_COUNT=[$23], P_B_ID=[$24], P_START_TIME=[$25])
+  LogicalFilter(condition=[AND(>=($0, CAST('2021-01-01 00:00:00'):TIMESTAMP(0) NOT NULL), <=($0, CAST('2021-05-31 23:59:59'):TIMESTAMP(0) NOT NULL))])
+    KuduQuery(table=[[default, default.log_range]])
+
+2022-04-23 14:30:13.882 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {inf}
+2022-04-23 14:30:13.883 DEBUG [o.a.c.plan.RelOptPlanner      :128] - Pop match: rule [ReduceExpressionsRule(Filter)] rels [#10]
+2022-04-23 14:30:13.883 DEBUG [o.a.c.plan.RelOptPlanner      :208] - call#57: Apply rule [ReduceExpressionsRule(Filter)] to [rel#10:LogicalFilter.NONE.[](input=RelSubset#9,condition=AND(>=($0, CAST('2021-01-01 00:00:00'):TIMESTAMP(0) NOT NULL), <=($0, CAST('2021-05-31 23:59:59'):TIMESTAMP(0) NOT NULL)))]
+2022-04-23 14:30:13.995 DEBUG [o.a.c.plan.RelOptPlanner      :104] - Transform to: rel#18 via ReduceExpressionsRule(Filter)
+2022-04-23 14:30:13.997 DEBUG [o.a.c.plan.RelOptPlanner      :238] - call#57 generated 1 successors: [rel#18:LogicalFilter.NONE.[](input=RelSubset#9,condition=SEARCH($0, Sarg[[2021-01-01 00:00:00..2021-05-31 23:59:59]]))]
+2022-04-23 14:30:13.997 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {inf}
+2022-04-23 14:30:13.997 DEBUG [o.a.c.plan.RelOptPlanner      :128] - Pop match: rule [ProjectRemoveRule] rels [#12]
+2022-04-23 14:30:13.997 DEBUG [o.a.c.plan.RelOptPlanner      :208] - call#68: Apply rule [ProjectRemoveRule] to [rel#12:LogicalProject.NONE.[](input=RelSubset#11,inputs=0..25)]
+2022-04-23 14:30:13.998 DEBUG [o.a.c.plan.RelOptPlanner      :104] - Transform to: rel#11 via ProjectRemoveRule
+2022-04-23 14:30:13.999 DEBUG [o.a.c.plan.RelOptPlanner      :238] - call#68 generated 1 successors: [rel#11:RelSubset#1.NONE.[]]
+2022-04-23 14:30:14.000 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {inf}
+2022-04-23 14:30:14.000 DEBUG [o.a.c.plan.RelOptPlanner      :128] - Pop match: rule [ReduceExpressionsRule(Filter)] rels [#18]
+2022-04-23 14:30:14.000 DEBUG [o.a.c.plan.RelOptPlanner      :208] - call#144: Apply rule [ReduceExpressionsRule(Filter)] to [rel#18:LogicalFilter.NONE.[](input=RelSubset#9,condition=SEARCH($0, Sarg[[2021-01-01 00:00:00..2021-05-31 23:59:59]]))]
+2022-04-23 14:30:14.000 DEBUG [o.a.c.plan.RelOptPlanner      :236] - call#144 generated 0 successors.
+2022-04-23 14:30:14.000 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {inf}
+2022-04-23 14:30:14.001 DEBUG [o.a.c.plan.RelOptPlanner      :128] - Pop match: rule [KuduToEnumerableConverterRule(in:KUDU,out:ENUMERABLE)] rels [#1]
+2022-04-23 14:30:14.001 DEBUG [o.a.c.plan.RelOptPlanner      :208] - call#6: Apply rule [KuduToEnumerableConverterRule(in:KUDU,out:ENUMERABLE)] to [rel#1:KuduQuery.KUDU.[](table=[default, default.log_range])]
+2022-04-23 14:30:14.002 DEBUG [o.a.c.plan.RelOptPlanner      :104] - Transform to: rel#20 via KuduToEnumerableConverterRule(in:KUDU,out:ENUMERABLE)
+2022-04-23 14:30:14.024 DEBUG [o.a.c.plan.RelOptPlanner      :238] - call#6 generated 1 successors: [rel#20:KuduToEnumerableRel.ENUMERABLE.[](input=KuduQuery#1)]
+2022-04-23 14:30:14.024 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {inf}
+2022-04-23 14:30:14.025 DEBUG [o.a.c.plan.RelOptPlanner      :115] - Skip match: rule [EnumerableFilterRule(in:NONE,out:ENUMERABLE)] rels [#10]
+2022-04-23 14:30:14.025 DEBUG [o.a.c.plan.RelOptPlanner      :115] - Skip match: rule [KuduPushDownFilters] rels [#10,#1]
+2022-04-23 14:30:14.025 DEBUG [o.a.c.plan.RelOptPlanner      :115] - Skip match: rule [ProjectFilterTransposeRule] rels [#12,#10]
+2022-04-23 14:30:14.025 DEBUG [o.a.c.plan.RelOptPlanner      :115] - Skip match: rule [EnumerableProjectRule(in:NONE,out:ENUMERABLE)] rels [#12]
+2022-04-23 14:30:14.025 DEBUG [o.a.c.plan.RelOptPlanner      :115] - Skip match: rule [KuduProjection] rels [#12]
+2022-04-23 14:30:14.025 DEBUG [o.a.c.plan.RelOptPlanner      :128] - Pop match: rule [ExpandConversionRule] rels [#17]
+2022-04-23 14:30:14.025 DEBUG [o.a.c.plan.RelOptPlanner      :208] - call#104: Apply rule [ExpandConversionRule] to [rel#17:AbstractConverter.ENUMERABLE.[](input=RelSubset#11,convention=ENUMERABLE,sort=[])]
+2022-04-23 14:30:14.027 DEBUG [o.a.c.plan.RelOptPlanner      :236] - call#104 generated 0 successors.
+2022-04-23 14:30:14.027 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {inf}
+2022-04-23 14:30:14.027 DEBUG [o.a.c.plan.RelOptPlanner      :115] - Skip match: rule [ProjectFilterTransposeRule] rels [#12,#18]
+2022-04-23 14:30:14.027 DEBUG [o.a.c.plan.RelOptPlanner      :128] - Pop match: rule [EnumerableFilterRule(in:NONE,out:ENUMERABLE)] rels [#18]
+2022-04-23 14:30:14.027 DEBUG [o.a.c.plan.RelOptPlanner      :208] - call#141: Apply rule [EnumerableFilterRule(in:NONE,out:ENUMERABLE)] to [rel#18:LogicalFilter.NONE.[](input=RelSubset#9,condition=SEARCH($0, Sarg[[2021-01-01 00:00:00..2021-05-31 23:59:59]]))]
+2022-04-23 14:30:14.028 DEBUG [o.a.c.plan.RelOptPlanner      :104] - Transform to: rel#23 via EnumerableFilterRule(in:NONE,out:ENUMERABLE)
+2022-04-23 14:30:14.038 DEBUG [o.a.c.plan.RelOptPlanner      :238] - call#141 generated 1 successors: [rel#23:EnumerableFilter.ENUMERABLE.[](input=RelSubset#22,condition=SEARCH($0, Sarg[[2021-01-01 00:00:00..2021-05-31 23:59:59]]))]
+2022-04-23 14:30:14.039 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {1350.0 rows, 2101.0 cpu, 0.0 io}
+2022-04-23 14:30:14.039 DEBUG [o.a.c.plan.RelOptPlanner      :128] - Pop match: rule [KuduPushDownFilters] rels [#18,#1]
+2022-04-23 14:30:14.039 DEBUG [o.a.c.plan.RelOptPlanner      :208] - call#146: Apply rule [KuduPushDownFilters] to [rel#18:LogicalFilter.NONE.[](input=RelSubset#9,condition=SEARCH($0, Sarg[[2021-01-01 00:00:00..2021-05-31 23:59:59]])), rel#1:KuduQuery.KUDU.[](table=[default, default.log_range])]
+2022-04-23 14:30:14.046 DEBUG [o.a.c.plan.RelOptPlanner      :104] - Transform to: rel#24 via KuduPushDownFilters
+2022-04-23 14:30:14.066 DEBUG [o.a.c.plan.RelOptPlanner      :238] - call#146 generated 1 successors: [rel#24:KuduFilterRel.KUDU.[](input=RelSubset#9,ScanToken 1=start_time GREATER_EQUAL 1609459200000000, start_time LESS_EQUAL 1622505599000000)]
+2022-04-23 14:30:14.067 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {1350.0 rows, 2101.0 cpu, 0.0 io}
+2022-04-23 14:30:14.067 DEBUG [o.a.c.plan.RelOptPlanner      :128] - Pop match: rule [MaterializedViewFilterScanRule] rels [#24,#1]
+2022-04-23 14:30:14.067 DEBUG [o.a.c.plan.RelOptPlanner      :208] - call#262: Apply rule [MaterializedViewFilterScanRule] to [rel#24:KuduFilterRel.KUDU.[](input=RelSubset#9,ScanToken 1=start_time GREATER_EQUAL 1609459200000000, start_time LESS_EQUAL 1622505599000000), rel#1:KuduQuery.KUDU.[](table=[default, default.log_range])]
+2022-04-23 14:30:14.068 DEBUG [o.a.c.plan.RelOptPlanner      :236] - call#262 generated 0 successors.
+2022-04-23 14:30:14.068 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {1350.0 rows, 2101.0 cpu, 0.0 io}
+2022-04-23 14:30:14.068 DEBUG [o.a.c.plan.RelOptPlanner      :128] - Pop match: rule [KuduToEnumerableConverterRule(in:KUDU,out:ENUMERABLE)] rels [#24]
+2022-04-23 14:30:14.068 DEBUG [o.a.c.plan.RelOptPlanner      :208] - call#271: Apply rule [KuduToEnumerableConverterRule(in:KUDU,out:ENUMERABLE)] to [rel#24:KuduFilterRel.KUDU.[](input=RelSubset#9,ScanToken 1=start_time GREATER_EQUAL 1609459200000000, start_time LESS_EQUAL 1622505599000000)]
+2022-04-23 14:30:14.068 DEBUG [o.a.c.plan.RelOptPlanner      :104] - Transform to: rel#26 via KuduToEnumerableConverterRule(in:KUDU,out:ENUMERABLE)
+2022-04-23 14:30:14.069 DEBUG [o.a.c.plan.RelOptPlanner      :238] - call#271 generated 1 successors: [rel#26:KuduToEnumerableRel.ENUMERABLE.[](input=KuduFilterRel#24)]
+2022-04-23 14:30:14.069 DEBUG [o.a.c.plan.RelOptPlanner      :49] - PLANNER = org.apache.calcite.plan.volcano.IterativeRuleDriver@1effd53c; COST = {1050.0 rows, 1126.0 cpu, 0.0 io}
+2022-04-23 14:30:14.069 DEBUG [a.c.p.A.rule_execution_summary:290] - Rule Attempts Info for VolcanoPlanner
+2022-04-23 14:30:14.070 DEBUG [a.c.p.A.rule_execution_summary:291] -
+Rules                                                                   Attempts           Time (us)
+ReduceExpressionsRule(Filter)                                                  2             113,390
+KuduToEnumerableConverterRule(in:KUDU,out:ENUMERABLE)                          2              24,304
+KuduPushDownFilters                                                            1              27,078
+EnumerableFilterRule(in:NONE,out:ENUMERABLE)                                   1              11,096
+ProjectRemoveRule                                                              1               2,094
+ExpandConversionRule                                                           1               1,356
+MaterializedViewFilterScanRule                                                 1                 261
+* Total                                                                        9             179,579
+
+2022-04-23 14:30:14.087 DEBUG [o.a.c.plan.RelOptPlanner      :522] - Cheapest plan:
+KuduToEnumerableRel: rowcount = 250.0, cumulative cost = {1050.0 rows, 1126.0 cpu, 0.0 io}, id = 29
+  KuduFilterRel(ScanToken 1=[start_time GREATER_EQUAL 1609459200000000, start_time LESS_EQUAL 1622505599000000]): rowcount = 250.0, cumulative cost = {1025.0 rows, 1101.0 cpu, 0.0 io}, id = 28
+    KuduQuery(table=[[default, default.log_range]]): rowcount = 1000.0, cumulative cost = {1000.0 rows, 1001.0 cpu, 0.0 io}, id = 1
+
+2022-04-23 14:30:14.090 DEBUG [o.a.c.plan.RelOptPlanner      :526] - Provenance:
+rel#29:KuduToEnumerableRel.ENUMERABLE.[](input=KuduFilterRel#28)
+  direct
+    rel#27:KuduToEnumerableRel.ENUMERABLE.[](input=RelSubset#25)
+      call#271 rule [KuduToEnumerableConverterRule(in:KUDU,out:ENUMERABLE)]
+        rel#24:KuduFilterRel.KUDU.[](input=RelSubset#9,ScanToken 1=start_time GREATER_EQUAL 1609459200000000, start_time LESS_EQUAL 1622505599000000)
+          call#146 rule [KuduPushDownFilters]
+            rel#18:LogicalFilter.NONE.[](input=RelSubset#9,condition=SEARCH($0, Sarg[[2021-01-01 00:00:00..2021-05-31 23:59:59]]))
+              call#57 rule [ReduceExpressionsRule(Filter)]
+                rel#10:LogicalFilter.NONE.[](input=RelSubset#9,condition=AND(>=($0, CAST('2021-01-01 00:00:00'):TIMESTAMP(0) NOT NULL), <=($0, CAST('2021-05-31 23:59:59'):TIMESTAMP(0) NOT NULL)))
+                  no parent
+            rel#1:KuduQuery.KUDU.[](table=[default, default.log_range])
+              no parent
+rel#28:KuduFilterRel.KUDU.[](input=KuduQuery#1,ScanToken 1=start_time GREATER_EQUAL 1609459200000000, start_time LESS_EQUAL 1622505599000000)
+  direct
+    rel#24 (see above)
+rel#1 (see above)
+
+2022-04-23 14:30:14.092 DEBUG [a.c.p.A.rule_execution_summary:290] - Rule Attempts Info for HepPlanner
+2022-04-23 14:30:14.092 DEBUG [a.c.p.A.rule_execution_summary:291] -
+Rules                                                                   Attempts           Time (us)
+* Total                                                                        0                   0
+
+2022-04-23 14:30:14.093 DEBUG [o.a.c.plan.RelOptPlanner      :381] - For final plan, using rel#33:KuduToEnumerableRel.ENUMERABLE.[](input=HepRelVertex#32)
+2022-04-23 14:30:14.093 DEBUG [o.a.c.plan.RelOptPlanner      :381] - For final plan, using rel#31:KuduFilterRel.KUDU.[](input=HepRelVertex#30,ScanToken 1=start_time GREATER_EQUAL 1609459200000000, start_time LESS_EQUAL 1622505599000000)
+2022-04-23 14:30:14.094 DEBUG [o.a.c.plan.RelOptPlanner      :381] - For final plan, using rel#1:KuduQuery.KUDU.[](table=[default, default.log_range])
+2022-04-23 14:30:14.094 DEBUG [o.a.calcite.prepare.Prepare   :169] - Plan after physical tweaks: KuduToEnumerableRel: rowcount = 250.0, cumulative cost = {1050.0 rows, 1126.0 cpu, 0.0 io}, id = 33
+  KuduFilterRel(ScanToken 1=[start_time GREATER_EQUAL 1609459200000000, start_time LESS_EQUAL 1622505599000000]): rowcount = 250.0, cumulative cost = {1025.0 rows, 1101.0 cpu, 0.0 io}, id = 31
+    KuduQuery(table=[[default, default.log_range]]): rowcount = 1000.0, cumulative cost = {1000.0 rows, 1001.0 cpu, 0.0 io}, id = 1
+
+2022-04-23 14:30:14.143 DEBUG [o.a.c.plan.RelOptPlanner      :241] - Created a KuduQueryable {
+  return ((com.twilio.kudu.sql.CalciteKuduTable.KuduQueryable) org.apache.calcite.schema.Schemas.queryable(root, root.getRootSchema().getSubSchema("default"), java.lang.Object[].class, "default.log_range")).query(v1stashed, v3stashed, -1L, -1L, false, false, v2stashed, (java.util.concurrent.atomic.AtomicBoolean) root.get("cancelFlag"), new org.apache.calcite.linq4j.function.Function1(){
+      public Object apply(final Object abstractRow) {
+        return new Object[] {
+(            (org.apache.kudu.client.RowResult) abstractRow).getTimestamp(0).toInstant().toEpochMilli(),
+(            (org.apache.kudu.client.RowResult) abstractRow).getString(1),
+(            (org.apache.kudu.client.RowResult) abstractRow).getTimestamp(2).toInstant().toEpochMilli(),
+(            (org.apache.kudu.client.RowResult) abstractRow).getLong(3),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(4)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(4);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(5)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(5);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(6)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getLong(6);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(7)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getLong(7);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(8)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getLong(8);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(9)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getLong(9);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(10)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getLong(10);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(11)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(11);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(12)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(12);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(13)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getLong(13);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(14)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(14);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(15)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getBoolean(15);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(16)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getBoolean(16);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(17)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(17);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(18)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(18);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(19)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getBoolean(19);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(20)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(20);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(21)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(21);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(22)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(22);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(23)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getLong(23);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(24)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(24);
+                }
+              }
+            }
+            .apply(),
+            new org.apache.calcite.linq4j.function.Function0() {
+              public Object apply() {
+                if (((org.apache.kudu.client.RowResult) abstractRow).isNull(25)) {
+                  return null;
+                } else {
+                  return ((org.apache.kudu.client.RowResult) abstractRow).getString(25);
+                }
+              }
+            }
+            .apply()};
+      }
+
+    }, org.apache.calcite.linq4j.function.Predicate1.TRUE, false, (org.apache.calcite.linq4j.function.Function1) null, v4stashed);
+}
+
+2022-04-23 14:30:14.380 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.397 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.399 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.400 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.402 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.413 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.419 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.422 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.423 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.423 DEBUG [c.t.kudu.sql.ScannerCallback  :85] - ScannerCallback created for scannerKuduScanner(table=default.log_range, tablet=null, scannerId=null, scanRequestTimeout=30000, startPrimaryKey=<start>, endPrimaryKey=<end>)
+2022-04-23 14:30:14.604  INFO [io.datadynamics.kudu.Starter  :76] - rows = 0
+2022-04-23 14:32:07.237 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:32:41.160 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:33:35.843 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:33:40.325 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:34:32.008 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:34:33.994 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:34:43.062 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:34:53.702 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:34:57.011 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:34:59.743 DEBUG [c.t.kudu.sql.ScannerCallback  :114] - Closing scanner: false false false false
+2022-04-23 14:34:59.744  INFO [io.datadynamics.kudu.Starter  :81] - finished
+2022-04-23 14:34:59.744  INFO [io.datadynamics.kudu.Starter  :82] - total rows = 93873513
+2022-04-23 14:34:59.750  INFO [io.datadynamics.kudu.Starter  :88] - elapsedTime = 288.969060893 s
+[root@hdw1:~]#
+```
+
+이 때 network 사용량
+
+![network usage](network_usage.png)

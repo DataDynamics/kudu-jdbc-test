@@ -13,6 +13,7 @@
   </appender>
 
   <logger name="io.datadynamics.kudu" level="INFO"/>
+  <logger name="org.apache.kudu" level="INFO"/>
 
   <root level="DEBUG">
     <appender-ref ref="CONSOLE"/>

@@ -17,10 +17,12 @@ import java.sql.Statement;
 public class Starter {
   public static void main(String[] args) throws ClassNotFoundException, SQLException {
     if (args.length < 2) {
-      log.error("java -jar kudu-jdbc-tester-0.3.jar <JDBC_URL> <SQL> [<PRINT_ROWS>]");
+      log.error("java -jar kudu-jdbc-tester-0.4.jar <JDBC_URL> <SQL> [<PRINT_ROWS>]");
       log.error("JDBC_URL: jdbc:impala://<HOST>:<PORT>/<DATABASE>");
-      log.error("JDBC_EX : jdbc:impala://hdw1.dd.io:21050/default;Property1=Value;Property2=Value;");
-      log.error("JDBC_EX : jdbc:impala://hdw1.dd.io:21050/default;AuthMech=3;UID=ldap_username;PWD=ldap_password;");
+      log.error(" example: jdbc:impala://hdw1.dd.io:21050/default;Property1=Value;Property2=Value;");
+      log.error(" example: jdbc:impala://hdw1.dd.io:21050/default;AuthMech=3;UID=ldap_username;PWD=ldap_password;");
+      log.error(" example: jdbc:kudu:schemaFactory=com.twilio.kudu.sql.schema.DefaultKuduSchemaFactory;schema=default;timeZone=ko_KR;caseSensitive=false;schema.connect=adm1:7051,hdm1:7051,hdm2:7051");
+      // select * from \"default.log_range\" where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'
       return;
     }
     // String jdbcUrl = "jdbc:impala://hdw1.dd.io:21050/default;Property1=Value;Property2=Value;";
@@ -35,7 +37,11 @@ public class Starter {
 
     long startTime = System.nanoTime();
     log.info("started");
-    Class.forName("com.cloudera.impala.jdbc.Driver");
+    if (jdbcUrl.startsWith("jdbc.impala://")) {
+      Class.forName("com.cloudera.impala.jdbc.Driver");
+    } else {
+      Class.forName("org.apache.calcite.jdbc.KuduDriver");
+    }
     // int fetchSize = 10;
 
     Connection conn = DriverManager.getConnection(jdbcUrl);
