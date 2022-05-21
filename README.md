@@ -1252,3 +1252,374 @@ Rules                                                                   Attempts
 이 때 network 사용량
 
 ![network usage](network_usage.png)
+
+# CDP Spark 에서 calcite-kudu 사용하기
+
+위에서 build 한 kudu-sql-adapter 를 spark 에서 사용하기 위해 시도함
+
+* 2022-05-21
+* protocol buffer 쪽 class not found exception 이 발생하여 protobuf-java-3.6.1.jar 를 따로 `--jars` option 에 넣어보려 했으나 이미 추가돼있었음
+* 그래서 `spark.driver.extraClassPath`, `spark.executor.extraClassPath` 2개 option 추가하니 2.10.0 ~ 2.11.0 사이여야 한다는 exception 발생
+  * `com.fasterxml.jackson.databind.JsonMappingException: Scala module 2.10.5 requires Jackson Databind version >= 2.10.0 and < 2.11.0`
+
+## kudu-sql-adapter rebuild
+
+`Invalid signature file digest for Manifest main attributes`, `com.fasterxml.jackson.databind.JsonMappingException: Scala module 2.10.5 requires Jackson Databind version >= 2.10.0 and < 2.11.0` exception 해결을 위해 아래와 같이 plugin 을 추가하여 maven build 수행함
+
+```shell
+mkdir ~/Downloads
+wget https://github.com/twilio/calcite-kudu/archive/refs/tags/1.0.57.zip
+unzip 1.0.57.zip
+cd calcite-kudu-1.0.57/adapter
+vim pom.xml
+```
+
+```xml
+<project>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.1.1</version>
+        <executions>
+          <execution>
+            <id>shade-collect</id>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+              <artifactSet>
+                <excludes>
+                  <exclude>com.fasterxml.jackson.core:*</exclude>
+                  <exclude>com.fasterxml.jackson.dataformat:*</exclude>
+                  <exclude>com.fasterxml.jackson.module:*</exclude>
+                </excludes>
+              </artifactSet>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+```
+
+```shell
+mvn clean package -DskipTests
+ll target/
+```
+
+```text
+[root@build:~/Downloads/calcite-kudu-1.0.57/adapter]# mvn clean package -DskipTests
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Detecting the operating system and CPU architecture
+[INFO] ------------------------------------------------------------------------
+[INFO] os.detected.name: linux
+[INFO] os.detected.arch: x86_64
+[INFO] os.detected.version: 3.10
+[INFO] os.detected.version.major: 3
+[INFO] os.detected.version.minor: 10
+[INFO] os.detected.release: centos
+[INFO] os.detected.release.version: 7
+[INFO] os.detected.release.like.centos: true
+[INFO] os.detected.release.like.rhel: true
+[INFO] os.detected.release.like.fedora: true
+[INFO] os.detected.classifier: linux-x86_64
+[INFO]
+[INFO] --------------------< com.twilio:kudu-sql-adapter >---------------------
+[INFO] Building Calcite Adapter for Kudu 1.0.57-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- maven-clean-plugin:2.5:clean (default-clean) @ kudu-sql-adapter ---
+[INFO] Deleting /root/Downloads/calcite-kudu-1.0.57/adapter/target
+[INFO]
+[INFO] --- maven-resources-plugin:3.2.0:copy-resources (copy-fmpp-resources) @ kudu-sql-adapter ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 2 resources
+[INFO]
+[INFO] --- maven-dependency-plugin:2.8:unpack (unpack-parser-template) @ kudu-sql-adapter ---
+[INFO] Configured Artifact: org.apache.calcite:calcite-core:?:jar
+[INFO] Unpacking /root/.m2/repository/org/apache/calcite/calcite-core/1.26.0/calcite-core-1.26.0.jar to /root/Downloads/calcite-kudu-1.0.57/adapter/target with includes "**/Parser.jj" and excludes ""
+[INFO]
+[INFO] --- fmpp-maven-plugin:1.0:generate (generate-fmpp-sources) @ kudu-sql-adapter ---
+- Executing: Parser.jj
+log4j:WARN No appenders could be found for logger (freemarker.cache).
+log4j:WARN Please initialize the log4j system properly.
+[INFO] Done
+[INFO]
+[INFO] --- javacc-maven-plugin:2.4:javacc (javacc) @ kudu-sql-adapter ---
+Java Compiler Compiler Version 4.0 (Parser Generator)
+(type "javacc" with no arguments for help)
+Reading from file /root/Downloads/calcite-kudu-1.0.57/adapter/target/generated-sources/javacc/Parser.jj . . .
+Note: UNICODE_INPUT option is specified. Please make sure you create the parser/lexer using a Reader with the correct character encoding.
+Warning: Lookahead adequacy checking not being performed since option LOOKAHEAD is more than 1.  Set option FORCE_LA_CHECK to true to force checking.
+File "TokenMgrError.java" does not exist.  Will create one.
+File "ParseException.java" does not exist.  Will create one.
+File "Token.java" does not exist.  Will create one.
+File "SimpleCharStream.java" does not exist.  Will create one.
+Parser generated with 0 errors and 1 warnings.
+[INFO] Processed 1 grammar
+[INFO]
+[INFO] --- maven-resources-plugin:3.2.0:resources (default-resources) @ kudu-sql-adapter ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] skip non existing resourceDirectory /root/Downloads/calcite-kudu-1.0.57/adapter/src/main/resources
+[INFO]
+[INFO] --- maven-compiler-plugin:3.8.1:compile (default-compile) @ kudu-sql-adapter ---
+[INFO] Changes detected - recompiling the module!
+[INFO] Compiling 96 source files to /root/Downloads/calcite-kudu-1.0.57/adapter/target/classes
+[INFO]
+[INFO] --- maven-resources-plugin:3.2.0:testResources (default-testResources) @ kudu-sql-adapter ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 4 resources
+[INFO]
+[INFO] --- maven-compiler-plugin:3.8.1:testCompile (default-testCompile) @ kudu-sql-adapter ---
+[INFO] Changes detected - recompiling the module!
+[INFO] Compiling 27 source files to /root/Downloads/calcite-kudu-1.0.57/adapter/target/test-classes
+[INFO]
+[INFO] --- maven-surefire-plugin:3.0.0-M5:test (default-test) @ kudu-sql-adapter ---
+[INFO] Tests are skipped.
+[INFO]
+[INFO] --- maven-jar-plugin:2.4:jar (default-jar) @ kudu-sql-adapter ---
+[INFO] Building jar: /root/Downloads/calcite-kudu-1.0.57/adapter/target/kudu-sql-adapter-1.0.57-SNAPSHOT.jar
+[INFO]
+[INFO] --- maven-javadoc-plugin:3.2.0:jar (attach-javadocs) @ kudu-sql-adapter ---
+[INFO] No previous run data found, generating javadoc.
+[INFO]
+Loading source files for package com.twilio.kudu.dataloader...
+Loading source files for package com.twilio.kudu.dataloader.generator...
+Loading source files for package com.twilio.kudu.sql...
+Loading source files for package com.twilio.kudu.sql.metadata...
+Loading source files for package com.twilio.kudu.sql.mutation...
+Loading source files for package com.twilio.kudu.sql.rel...
+Loading source files for package com.twilio.kudu.sql.rules...
+Loading source files for package com.twilio.kudu.sql.schema...
+Loading source files for package org.apache.calcite.jdbc...
+Loading source files for package org.apache.calcite.prepare...
+Loading source files for package org.apache.calcite.sql...
+Constructing Javadoc information...
+Standard Doclet version 1.8.0_322
+Building tree for all the packages and classes...
+Generating /root/Downloads/calcite-kudu-1.0.57/adapter/target/apidocs/com/twilio/kudu/dataloader/DataLoader.html...
+...(생략)
+Generating /root/Downloads/calcite-kudu-1.0.57/adapter/target/apidocs/help-doc.html...
+[INFO] Building jar: /root/Downloads/calcite-kudu-1.0.57/adapter/target/kudu-sql-adapter-1.0.57-SNAPSHOT-javadoc.jar
+[INFO]
+[INFO] --- maven-source-plugin:3.2.0:jar-no-fork (attach-sources) @ kudu-sql-adapter ---
+[INFO] Building jar: /root/Downloads/calcite-kudu-1.0.57/adapter/target/kudu-sql-adapter-1.0.57-SNAPSHOT-sources.jar
+[INFO]
+[INFO] --- maven-shade-plugin:3.1.1:shade (shade-collect) @ kudu-sql-adapter ---
+[INFO] Including org.apache.kudu:kudu-client:jar:1.15.0 in the shaded jar.
+...(생략)
+[INFO] Including org.slf4j:slf4j-api:jar:1.7.21 in the shaded jar.
+[WARNING] Discovered module-info.class. Shading will break its strong encapsulation.
+[WARNING] Discovered module-info.class. Shading will break its strong encapsulation.
+[INFO] Replacing original artifact with shaded artifact.
+[INFO] Replacing /root/Downloads/calcite-kudu-1.0.57/adapter/target/kudu-sql-adapter-1.0.57-SNAPSHOT.jar with /root/Downloads/calcite-kudu-1.0.57/adapter/target/kudu-sql-adapter-1.0.57-SNAPSHOT-shaded.jar
+[INFO] Dependency-reduced POM written at: /root/Downloads/calcite-kudu-1.0.57/adapter/dependency-reduced-pom.xml
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  17.120 s
+[INFO] Finished at: 2022-05-21T20:29:54+09:00
+[INFO] ------------------------------------------------------------------------
+[root@build:~/Downloads/calcite-kudu-1.0.57/adapter]# ll target/
+total 37544
+drwxr-xr-x. 12 root root     4096 May 21 20:29 ./
+drwxr-xr-x.  4 root root      128 May 21 20:29 ../
+drwxr-xr-x.  4 root root     4096 May 21 20:29 apidocs/
+drwxr-xr-x.  4 root root       28 May 21 20:29 classes/
+drwxr-xr-x.  4 root root       58 May 21 20:29 codegen/
+drwxr-xr-x.  2 root root       67 May 21 20:29 dependency-maven-plugin-markers/
+drwxr-xr-x.  5 root root       50 May 21 20:29 generated-sources/
+drwxr-xr-x.  3 root root       30 May 21 20:29 generated-test-sources/
+drwxr-xr-x.  2 root root       71 May 21 20:29 javadoc-bundle-options/
+-rw-r--r--.  1 root root 36706677 May 21 20:29 kudu-sql-adapter-1.0.57-SNAPSHOT.jar
+-rw-r--r--.  1 root root   630425 May 21 20:29 kudu-sql-adapter-1.0.57-SNAPSHOT-javadoc.jar
+-rw-r--r--.  1 root root   419982 May 21 20:29 kudu-sql-adapter-1.0.57-SNAPSHOT-sources.jar
+drwxr-xr-x.  2 root root       28 May 21 20:29 maven-archiver/
+-rw-r--r--.  1 root root     6841 May 21 20:29 maven-javadoc-plugin-stale-data.txt
+drwxr-xr-x.  3 root root       35 May 21 20:29 maven-status/
+-rw-r--r--.  1 root root   663607 May 21 20:29 original-kudu-sql-adapter-1.0.57-SNAPSHOT.jar
+drwxr-xr-x.  4 root root       71 May 21 20:29 test-classes/
+[root@build:~/Downloads/calcite-kudu-1.0.57/adapter]#
+```
+
+## spark3-shell
+
+```shell
+spark3-shell \
+ --conf spark.driver.extraClassPath=/opt/cloudera/parcels/SPARK3/lib/spark3/jars/kudu-sql-adapter-1.0.57-SNAPSHOT.jar \
+ --conf spark.executor.extraClassPath=/opt/cloudera/parcels/SPARK3/lib/spark3/jars/kudu-sql-adapter-1.0.57-SNAPSHOT.jar \
+ --executor-cores 2 --num-executors 5 \
+ --jars $(echo /root/spark3/kudu/*.jar | tr ' ' ',')
+```
+
+```scala
+val df = spark.read.option("url", "jdbc:kudu:schemaFactory=com.twilio.kudu.sql.schema.DefaultKuduSchemaFactory#INSTANCE;schema=kudu;timeZone=UTC;caseSensitive=false;parserFactory=com.twilio.kudu.sql.parser.KuduSqlParserImpl#FACTORY;schema.connect=adm1,hdm1,hdm2;schema.enableInserts=true").
+option("dbtable", "\"default.log_range\"").
+option("driver", "org.apache.calcite.jdbc.KuduDriver").
+format("jdbc").load
+val df2 = df.where("start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'")
+val startTime = System.nanoTime
+val readAccum = spark.sparkContext.longAccumulator("read")
+df2.foreach(r=>{readAccum.add(1)})
+val finishTime = System.nanoTime
+val rowCount = readAccum.value
+val elapsedTimeSecs = (finishTime - startTime).toDouble / 1000000000
+println(s"rowCount = ${rowCount}, elapsedTime = ${elapsedTimeSecs} secs")
+```
+
+```text
+[root@hdw1:~]# spark3-shell --conf spark.driver.extraClassPath=/opt/cloudera/parcels/SPARK3/lib/spark3/jars/kudu-sql-adapter-1.0.57-SNAPSHOT.jar --conf spark.executor.extraClassPath=/opt/cloudera/parcels/SPARK3/lib/spark3/jars/kudu-sql-adapter-1.0.57-SNAPSHOT.jar --executor-cores 2 --num-executors 5 --jars $(echo /root/spark3/kudu/*.jar | tr ' ' ',')
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+22/05/21 21:07:47 WARN cluster.YarnSchedulerBackend$YarnSchedulerEndpoint: Attempted to request executors before the AM has registered!
+Spark context Web UI available at http://hdw1.dd.io:4040
+Spark context available as 'sc' (master = yarn, app id = application_1648652820971_0142).
+Spark session available as 'spark'.
+Welcome to
+      ____              __
+     / __/__  ___ _____/ /__
+    _\ \/ _ \/ _ `/ __/  '_/
+   /___/ .__/\_,_/_/ /_/\_\   version 3.2.0.3.2.7170.1001-3
+      /_/
+
+Using Scala version 2.12.10 (OpenJDK 64-Bit Server VM, Java 1.8.0_322)
+Type in expressions to have them evaluated.
+Type :help for more information.
+
+scala> val df = spark.read.option("url", "jdbc:kudu:schemaFactory=com.twilio.kudu.sql.schema.DefaultKuduSchemaFactory#INSTANCE;schema=kudu;timeZone=UTC;caseSensitive=false;parserFactory=com.twilio.kudu.sql.parser.KuduSqlParserImpl#FACTORY;schema.connect=adm1,hdm1,hdm2;schema.enableInserts=true").
+     | option("dbtable", "\"default.log_range\"").
+     | option("driver", "org.apache.calcite.jdbc.KuduDriver").
+     | format("jdbc").load
+df: org.apache.spark.sql.DataFrame = [START_TIME: timestamp, B_ID: string ... 24 more fields]
+
+scala> val df2 = df.where("start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'")
+df2: org.apache.spark.sql.Dataset[org.apache.spark.sql.Row] = [START_TIME: timestamp, B_ID: string ... 24 more fields]
+
+scala> val startTime = System.nanoTime
+startTime: Long = 4482843274534097
+
+scala> val readAccum = spark.sparkContext.longAccumulator("read")
+readAccum: org.apache.spark.util.LongAccumulator = LongAccumulator(id: 0, name: Some(read), value: 0)
+
+scala> df2.foreach(r=>{readAccum.add(1)})
+22/05/21 21:08:49 WARN util.package: Truncated the string representation of a plan since it was too large. This behavior can be adjusted by setting 'spark.sql.debug.maxToStringFields'.
+
+scala> val finishTime = System.nanoTime
+finishTime: Long = 4483543783044043
+
+scala> val rowCount = readAccum.value
+rowCount: Long = 93873513
+
+scala> val elapsedTimeSecs = (finishTime - startTime).toDouble / 1000000000
+elapsedTimeSecs: Double = 700.508509946
+
+scala> println(s"rowCount = ${rowCount}, elapsedTime = ${elapsedTimeSecs} secs")
+rowCount = 93873513, elapsedTime = 700.508509946 secs
+
+scala>
+```
+
+이 때 network 사용량
+
+![network usage spark3](network_usage_spark3.png)
+
+## spark-shell
+
+```shell
+spark-shell \
+ --conf spark.driver.extraClassPath=/opt/cloudera/parcels/SPARK3/lib/spark3/jars/kudu-sql-adapter-1.0.57-SNAPSHOT.jar \
+ --conf spark.executor.extraClassPath=/opt/cloudera/parcels/SPARK3/lib/spark3/jars/kudu-sql-adapter-1.0.57-SNAPSHOT.jar \
+ --executor-cores 2 --num-executors 5 \
+ --jars $(echo /root/spark3/kudu/*.jar | tr ' ' ',')
+```
+
+```scala
+val df = spark.read.format("jdbc").
+option("url", "jdbc:kudu:schemaFactory=com.twilio.kudu.sql.schema.DefaultKuduSchemaFactory#INSTANCE;schema=kudu;timeZone=UTC;caseSensitive=false;parserFactory=com.twilio.kudu.sql.parser.KuduSqlParserImpl#FACTORY;schema.connect=adm1,hdm1,hdm2;schema.enableInserts=true").
+option("query", "select * from \"default.log_range\" where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'").
+option("driver", "org.apache.calcite.jdbc.KuduDriver").
+load
+val startTime = System.nanoTime
+val readAccum = spark.sparkContext.longAccumulator("read")
+df.foreach(r=>{readAccum.add(1)})
+val finishTime = System.nanoTime
+val rowCount = readAccum.value
+val elapsedTimeSecs = (finishTime - startTime).toDouble / 1000000000
+println(s"rowCount = ${rowCount}, elapsedTime = ${elapsedTimeSecs} secs")
+```
+
+```text
+[root@hdw1:~]# spark-shell \
+>  --conf spark.driver.extraClassPath=/opt/cloudera/parcels/SPARK3/lib/spark3/jars/kudu-sql-adapter-1.0.57-SNAPSHOT.jar \
+>  --conf spark.executor.extraClassPath=/opt/cloudera/parcels/SPARK3/lib/spark3/jars/kudu-sql-adapter-1.0.57-SNAPSHOT.jar \
+>  --executor-cores 2 --num-executors 5 \
+>  --jars $(echo /root/spark3/kudu/*.jar | tr ' ' ',')
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+22/05/21 22:08:28 WARN cluster.YarnSchedulerBackend$YarnSchedulerEndpoint: Attempted to request executors before the AM has registered!
+Spark context Web UI available at http://hdw1.dd.io:4040
+Spark context available as 'sc' (master = yarn, app id = application_1648652820971_0144).
+Spark session available as 'spark'.
+Welcome to
+      ____              __
+     / __/__  ___ _____/ /__
+    _\ \/ _ \/ _ `/ __/  '_/
+   /___/ .__/\_,_/_/ /_/\_\   version 2.4.7.7.1.7.0-551
+      /_/
+
+Using Scala version 2.11.12 (OpenJDK 64-Bit Server VM, Java 1.8.0_322)
+Type in expressions to have them evaluated.
+Type :help for more information.
+
+scala> val df = spark.read.format("jdbc").
+     | option("url", "jdbc:kudu:schemaFactory=com.twilio.kudu.sql.schema.DefaultKuduSchemaFactory#INSTANCE;schema=kudu;timeZone=UTC;caseSensitive=false;parserFactory=com.twilio.kudu.sql.parser.KuduSqlParserImpl#FACTORY;schema.connect=adm1,hdm1,hdm2;schema.enableInserts=true").
+     | option("query", "select * from \"default.log_range\" where start_time between '2021-01-01 00:00:00' and '2021-05-31 23:59:59'").
+     | option("driver", "org.apache.calcite.jdbc.KuduDriver").
+     | load
+df: org.apache.spark.sql.DataFrame = [START_TIME: timestamp, B_ID: string ... 24 more fields]
+
+scala> val startTime = System.nanoTime
+startTime: Long = 4486476112913916
+
+scala> val readAccum = spark.sparkContext.longAccumulator("read")
+readAccum: org.apache.spark.util.LongAccumulator = LongAccumulator(id: 0, name: Some(read), value: 0)
+
+scala> df.foreach(r=>{readAccum.add(1)})
+22/05/21 22:09:21 WARN util.package: Truncated the string representation of a plan since it was too large. This behavior can be adjusted by setting 'spark.sql.debug.maxToStringFields'.
+
+scala> val finishTime = System.nanoTime
+finishTime: Long = 4487157821603898
+
+scala> val rowCount = readAccum.value
+rowCount: Long = 93873513
+
+scala> val elapsedTimeSecs = (finishTime - startTime).toDouble / 1000000000
+elapsedTimeSecs: Double = 681.708689982
+
+scala> println(s"rowCount = ${rowCount}, elapsedTime = ${elapsedTimeSecs} secs")
+rowCount = 93873513, elapsedTime = 681.708689982 secs
+
+scala>
+```
+
+이 때 network 사용량
+
+![network usage spark2](network_usage_spark2.png)
